@@ -19,22 +19,28 @@
       border: 1px solid #444;
       cursor: crosshair;
     }
+
+    #pasteCatcher {
+      opacity: 0;
+      position: fixed;
+      left: -1000px;
+    }
   </style>
 </head>
 
 <body>
   <canvas id="screen"></canvas>
+  <textarea id="pasteCatcher"></textarea>
 
   <script>
     const ws = new WebSocket('ws://' + location.host);
     const canvas = document.getElementById('screen');
     const ctx = canvas.getContext('2d');
+    const pasteCatcher = document.getElementById('pasteCatcher');
 
-    // --- Nhận dữ liệu từ server ---
     ws.onmessage = async e => {
       const data = JSON.parse(e.data);
 
-      // Ảnh màn hình
       if (data.type === 'frame') {
         const img = new Image();
         img.src = 'data:image/jpeg;base64,' + data.image;
@@ -45,31 +51,18 @@
         };
       }
 
-      // Clipboard từ remote browser
       if (data.type === 'clipboard') {
         try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(data.text);
-            console.log('📋 Nhận clipboard từ remote:', data.text);
-          } else {
-            // Fallback DOM
-            const input = document.createElement('textarea');
-            input.value = data.text;
-            document.body.appendChild(input);
-            input.select();
-            document.execCommand('copy');
-            document.body.removeChild(input);
-            console.log('📋 (Fallback) Nhận clipboard:', data.text);
-          }
-        } catch (err) {
-          console.warn('Không ghi được clipboard, fallback DOM:', err);
-          const input = document.createElement('textarea');
-          input.value = data.text;
-          document.body.appendChild(input);
-          input.select();
+          await navigator.clipboard.writeText(data.text);
+          console.log('📋 Nhận clipboard từ remote:', data.text);
+        } catch {
+          const el = document.createElement('textarea');
+          el.value = data.text;
+          document.body.appendChild(el);
+          el.select();
           document.execCommand('copy');
-          document.body.removeChild(input);
-          console.log('📋 (Fallback) Nhận clipboard:', data.text);
+          el.remove();
+          console.log('📋 Fallback copy:', data.text);
         }
       }
     };
@@ -95,37 +88,35 @@
     // --- Keyboard ---
     window.addEventListener('keydown', e => {
       ws.send(JSON.stringify({ type: 'key', subtype: 'down', key: e.key }));
-      if (e.ctrlKey && e.key === 'v') sendClipboard(); // Ctrl+V để gửi clipboard local
     });
-
     window.addEventListener('keyup', e => {
       ws.send(JSON.stringify({ type: 'key', subtype: 'up', key: e.key }));
     });
 
-    // --- Clipboard local gửi lên server ---
-    async function sendClipboard() {
-      try {
-        const text = await navigator.clipboard.readText();
-        ws.send(JSON.stringify({ type: 'clipboard', text }));
-        console.log('📤 Gửi clipboard:', text);
-      } catch (err) {
-        console.warn('Không đọc được clipboard, fallback DOM:', err);
-
-        // Fallback: dùng textarea + Ctrl+V
-        const input = document.createElement('textarea');
-        document.body.appendChild(input);
-        input.focus();
-        document.execCommand('paste');
-        const text = input.value;
-        document.body.removeChild(input);
-        if (text) {
-          ws.send(JSON.stringify({ type: 'clipboard', text }));
-          console.log('📤 (Fallback) Gửi clipboard:', text);
-        }
+    // --- Clipboard: bắt sự kiện paste thật ---
+    window.addEventListener('paste', e => {
+      let text = '';
+      if (e.clipboardData && e.clipboardData.getData) {
+        text = e.clipboardData.getData('text');
+      } else {
+        text = pasteCatcher.value;
       }
-    }
+      if (text.trim()) {
+        ws.send(JSON.stringify({ type: 'clipboard', text }));
+        console.log('📤 Gửi clipboard (paste event):', text);
+      }
+    });
 
-    // --- Vô hiệu menu chuột phải ---
+    // --- Fallback khi Ctrl+V không paste trực tiếp ---
+    window.addEventListener('keydown', e => {
+      if (e.ctrlKey && e.key.toLowerCase() === 'v') {
+        pasteCatcher.value = '';
+        pasteCatcher.focus();
+        setTimeout(() => pasteCatcher.blur(), 300);
+      }
+    });
+
+    // --- Cấm menu chuột phải ---
     window.addEventListener('contextmenu', e => e.preventDefault());
   </script>
 </body>
