@@ -30,11 +30,10 @@
     const canvas = document.getElementById('screen');
     const ctx = canvas.getContext('2d');
 
-    // --- Nhận dữ liệu từ server ---
     ws.onmessage = async e => {
       const data = JSON.parse(e.data);
 
-      // Ảnh màn hình
+      // --- Hiển thị frame ---
       if (data.type === 'frame') {
         const img = new Image();
         img.src = 'data:image/jpeg;base64,' + data.image;
@@ -45,31 +44,22 @@
         };
       }
 
-      // Clipboard từ remote browser
+      // --- Nhận clipboard từ remote ---
       if (data.type === 'clipboard') {
         try {
           if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(data.text);
             console.log('📋 Nhận clipboard từ remote:', data.text);
-          } else {
-            // Fallback DOM
-            const input = document.createElement('textarea');
-            input.value = data.text;
-            document.body.appendChild(input);
-            input.select();
-            document.execCommand('copy');
-            document.body.removeChild(input);
-            console.log('📋 (Fallback) Nhận clipboard:', data.text);
-          }
+          } else throw new Error('Clipboard API unavailable');
         } catch (err) {
-          console.warn('Không ghi được clipboard, fallback DOM:', err);
-          const input = document.createElement('textarea');
-          input.value = data.text;
-          document.body.appendChild(input);
-          input.select();
+          console.warn('⚠ Không ghi được clipboard, fallback:', err);
+          const el = document.createElement('textarea');
+          el.value = data.text;
+          document.body.appendChild(el);
+          el.select();
           document.execCommand('copy');
-          document.body.removeChild(input);
-          console.log('📋 (Fallback) Nhận clipboard:', data.text);
+          document.body.removeChild(el);
+          console.log('📋 Fallback copy hoàn tất:', data.text);
         }
       }
     };
@@ -93,36 +83,56 @@
     }
 
     // --- Keyboard ---
-    window.addEventListener('keydown', e => {
+    window.addEventListener('keydown', async e => {
       ws.send(JSON.stringify({ type: 'key', subtype: 'down', key: e.key }));
-      if (e.ctrlKey && e.key === 'v') sendClipboard(); // Ctrl+V để gửi clipboard local
+
+      // ✅ Khi nhấn Ctrl+V, thử đọc clipboard bằng textarea fallback
+      if (e.ctrlKey && e.key.toLowerCase() === 'v') {
+        e.preventDefault();
+        await readClipboardFallback();
+      }
     });
 
     window.addEventListener('keyup', e => {
       ws.send(JSON.stringify({ type: 'key', subtype: 'up', key: e.key }));
     });
 
-    // --- Clipboard local gửi lên server ---
-    async function sendClipboard() {
+    // --- Đọc clipboard local ---
+    async function readClipboardFallback() {
       try {
-        const text = await navigator.clipboard.readText();
-        ws.send(JSON.stringify({ type: 'clipboard', text }));
-        console.log('📤 Gửi clipboard:', text);
-      } catch (err) {
-        console.warn('Không đọc được clipboard, fallback DOM:', err);
-
-        // Fallback: dùng textarea + Ctrl+V
-        const input = document.createElement('textarea');
-        document.body.appendChild(input);
-        input.focus();
-        document.execCommand('paste');
-        const text = input.value;
-        document.body.removeChild(input);
-        if (text) {
-          ws.send(JSON.stringify({ type: 'clipboard', text }));
-          console.log('📤 (Fallback) Gửi clipboard:', text);
+        // Thử API hiện đại trước
+        if (navigator.clipboard?.readText) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            ws.send(JSON.stringify({ type: 'clipboard', text }));
+            console.log('📤 Gửi clipboard (modern):', text);
+            return;
+          }
         }
-      }
+      } catch (_) { }
+
+      // Nếu không được, dùng textarea (yêu cầu Ctrl+V user)
+      return new Promise(resolve => {
+        const ta = document.createElement('textarea');
+        ta.style.position = 'fixed';
+        ta.style.opacity = 0;
+        document.body.appendChild(ta);
+        ta.focus();
+
+        const handlePaste = () => {
+          const text = ta.value;
+          document.body.removeChild(ta);
+          if (text) {
+            ws.send(JSON.stringify({ type: 'clipboard', text }));
+            console.log('📤 Gửi clipboard (fallback):', text);
+          }
+          resolve();
+        };
+
+        setTimeout(() => {
+          handlePaste();
+        }, 150); // chờ user Ctrl+V thực thi
+      });
     }
 
     // --- Vô hiệu menu chuột phải ---
