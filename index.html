@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Remote Browser</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+
+    canvas {
+      border: 1px solid #444;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="screen"></canvas>
+  <script>
+    const ws = new WebSocket('ws://' + location.host);
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+
+    ws.onmessage = e => {
+      const data = JSON.parse(e.data);
+
+      // Nhận frame
+      if (data.type === 'frame') {
+        const img = new Image();
+        img.src = 'data:image/jpeg;base64,' + data.image;
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+        };
+      }
+
+      // Nhận clipboard từ browser remote
+      if (data.type === 'clipboard') {
+        navigator.clipboard.writeText(data.text).then(() => {
+          console.log('📋 Nhận clipboard từ remote:', data.text);
+        });
+      }
+    };
+
+    // --- Mouse ---
+    canvas.addEventListener('mousemove', e => sendMouse('move', e));
+    canvas.addEventListener('mousedown', e => sendMouse('down', e));
+    canvas.addEventListener('mouseup', e => sendMouse('up', e));
+    canvas.addEventListener('wheel', e => {
+      ws.send(JSON.stringify({ type: 'mouse', subtype: 'wheel', deltaY: e.deltaY }));
+    });
+
+    function sendMouse(subtype, e) {
+      ws.send(JSON.stringify({
+        type: 'mouse',
+        subtype,
+        x: e.offsetX,
+        y: e.offsetY,
+        button: e.button === 2 ? 'right' : 'left'
+      }));
+    }
+
+    // --- Keyboard ---
+    window.addEventListener('keydown', e => {
+      ws.send(JSON.stringify({ type: 'key', subtype: 'down', key: e.key }));
+      // Ctrl+V = gửi clipboard local lên server
+      if (e.ctrlKey && e.key === 'v') sendClipboard();
+    });
+    window.addEventListener('keyup', e => {
+      ws.send(JSON.stringify({ type: 'key', subtype: 'up', key: e.key }));
+    });
+
+    // --- Clipboard ---
+    async function sendClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        ws.send(JSON.stringify({ type: 'clipboard', text }));
+        console.log('📤 Gửi clipboard:', text);
+      } catch (err) {
+        console.warn('Không đọc được clipboard:', err);
+      }
+    }
+
+    // --- Right click disable (tránh menu chuột phải) ---
+    window.addEventListener('contextmenu', e => e.preventDefault());
+  </script>
+</body>
+
+</html>
