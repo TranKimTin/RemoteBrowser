@@ -67,7 +67,7 @@ async function handleClient(ws) {
           console.log('📋 Clipboard (poll):', text);
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }, 1000); // kiểm tra mỗi 1 giây
 
   // --- Stream ảnh màn hình ---
@@ -105,10 +105,23 @@ async function handleClient(ws) {
 
       if (data.type === 'clipboard') {
         await page.evaluate(async text => {
-          await navigator.clipboard.writeText(text);
+          // Tạo event paste mô phỏng với dữ liệu thật
+          const event = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: new DataTransfer(),
+          });
+          event.clipboardData.setData('text/plain', text);
+          document.activeElement.dispatchEvent(event);
+
+          // Dán trực tiếp nếu có thể (giả lập Ctrl+V)
+          if (document.activeElement && document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') {
+            document.activeElement.value += text;
+          }
         }, data.text);
-        console.log('📋 Clipboard từ client:', data.text);
+        console.log('📋 Giả lập paste:', data.text);
       }
+
 
       if (data.type === 'navigate') await page.goto(data.url);
     } catch (e) {
@@ -120,7 +133,7 @@ async function handleClient(ws) {
     capturing = false;
     try {
       await page.close();
-    } catch {}
+    } catch { }
   });
 }
 
